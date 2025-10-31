@@ -55,7 +55,11 @@ app.use(passport.session());
 
 app.use(
   cors({
-    origin: [config.FRONTEND_ORIGIN, "http://localhost:5173"],
+    origin: [
+      config.FRONTEND_ORIGIN,
+      "http://localhost:5173",
+      "https://state-flow-frontend.vercel.app"
+    ],
     credentials: true,
   })
 );
