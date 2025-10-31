@@ -48,7 +48,7 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
         topK: 40,
       };
 
-      // Create model with generation config for speed optimization
+      // Create model with generationConfig for speed optimization
       const model = genAI.getGenerativeModel({ 
         model: modelName,
         generationConfig,
@@ -57,7 +57,9 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
       const prompt = buildPrompt(action, optimizedText);
 
       // Add timeout wrapper (5 seconds for fast failure)
+      // Pass prompt as string (simpler and more reliable)
       const generatePromise = model.generateContent(prompt);
+      
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Request timeout')), 5000)
       );
@@ -71,9 +73,11 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
     } catch (err: any) {
       lastError = err;
       // If it's a 404 model not found or timeout, try the next model
-      if (err.message?.includes('404') || err.message?.includes('not found') || err.message?.includes('timeout')) {
+      if (err.message?.includes('404') || err.message?.includes('not found') || err.message?.includes('timeout') || err.status === 404) {
         continue;
       }
+      // Log the actual error for debugging
+      console.error(`AI request failed for model ${modelName}:`, err.message || err);
       // For other errors, throw immediately
       throw new BadRequestException(`AI request failed: ${err.message || 'Unknown error'}`);
     }
