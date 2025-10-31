@@ -21,13 +21,17 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
     optimizedText = text.slice(0, 1500);
   }
 
-  // Use the model that's actually available in your account
-  // Based on your Google AI Studio dashboard, you're using gemini-2.5-pro
+  // Based on your dashboard, use models with better rate limits
+  // gemini-2.5-pro has only 2 RPM which is too low - causing rate limit errors
+  // Prioritize Flash models which are fast AND have higher rate limits
   const modelNames = [
-    'gemini-2.5-pro',        // Primary model from your dashboard
-    'gemini-1.5-flash',      // Fast fallback option
-    'gemini-1.5-pro',        // More capable fallback
-    'gemini-pro',            // Legacy fallback
+    'gemini-2.0-flash-lite',  // Best: 30 RPM, 1M TPM, 200 RPD (fastest & highest limits)
+    'gemini-2.0-flash',       // Good: 15 RPM, 1M TPM, 200 RPD (fast & high limits)
+    'gemini-2.5-flash-lite',  // Good: 15 RPM, 250K TPM, 1K RPD
+    'gemini-2.5-flash',       // Good: 10 RPM, 250K TPM, 250 RPD
+    'gemini-1.5-flash',       // Fallback: Widely available
+    'gemini-1.5-pro',         // Fallback: More capable
+    // Avoid gemini-2.5-pro (only 2 RPM - too low!)
   ];
 
   // Lazy require to avoid import issues if package not installed yet
