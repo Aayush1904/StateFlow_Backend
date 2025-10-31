@@ -17,8 +17,12 @@ export const googleLoginCallback = asyncHandler(
       );
     }
 
+    const frontendUrl = config.FRONTEND_ORIGIN.startsWith('http') 
+      ? config.FRONTEND_ORIGIN 
+      : `https://${config.FRONTEND_ORIGIN}`;
+    
     return res.redirect(
-      `${config.FRONTEND_ORIGIN}/workspace/${currentWorkspace}`
+      `${frontendUrl}/workspace/${currentWorkspace}`
     );
   }
 );
