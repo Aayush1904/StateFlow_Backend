@@ -19,36 +19,68 @@ export const createPageService = async (
 
   let initialContent = content || '';
 
-  // If templateId is provided but no content was submitted, use template content as fallback
+  // If templateId is provided, try to use template content as fallback if content is empty or just whitespace
   // This allows users to edit the template content in the editor and have their edits saved
-  if (templateId && !content) {
-    const template = await PageTemplateModel.findById(templateId);
-    if (!template) {
-      throw new NotFoundException('Template not found');
+  if (templateId && (!content || content.trim() === '')) {
+    try {
+      // Validate templateId is a valid ObjectId format
+      if (!mongoose.Types.ObjectId.isValid(templateId)) {
+        console.warn(`Invalid templateId format: ${templateId}`);
+      } else {
+        const template = await PageTemplateModel.findById(templateId);
+        if (!template) {
+          // Log warning but don't fail - allow page creation without template content
+          console.warn(`Template ${templateId} not found, proceeding without template content`);
+        } else {
+          // Verify template is accessible (workspace-specific or default)
+          const isAccessible = 
+            template.isDefault || 
+            (template.workspace && template.workspace.toString() === workspaceId);
+          
+          if (!isAccessible) {
+            console.warn(`Template ${templateId} is not accessible in workspace ${workspaceId}`);
+            // Don't throw error, just log and continue with empty content
+          } else {
+            initialContent = template.content || '';
+          }
+        }
+      }
+    } catch (error) {
+      // Log error but don't fail page creation
+      console.error('Error fetching template:', error);
+      // Continue with empty or existing content
     }
-
-    // Verify template is accessible (workspace-specific or default)
-    const isAccessible = 
-      template.isDefault || 
-      (template.workspace && template.workspace.toString() === workspaceId);
-    
-    if (!isAccessible) {
-      throw new BadRequestException('Template is not accessible in this workspace');
-    }
-
-    initialContent = template.content;
   }
 
   // Generate slug from title
-  const slug = title
+  let slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
 
-  // Check if slug already exists
-  const existingPage = await PageModel.findOne({ slug });
-  if (existingPage) {
-    throw new BadRequestException('A page with this title already exists');
+  // If slug is empty (e.g., title contains only special characters), generate a fallback
+  if (!slug || slug.trim() === '') {
+    slug = `page-${Date.now()}`;
+  }
+
+  // Check if slug already exists in this workspace, if so append a number
+  let finalSlug = slug;
+  let counter = 1;
+  while (true) {
+    const existingPage = await PageModel.findOne({ 
+      slug: finalSlug,
+      workspace: new mongoose.Types.ObjectId(workspaceId)
+    });
+    if (!existingPage) {
+      break;
+    }
+    finalSlug = `${slug}-${counter}`;
+    counter++;
+    // Prevent infinite loop (max 1000 attempts)
+    if (counter > 1000) {
+      finalSlug = `${slug}-${Date.now()}`;
+      break;
+    }
   }
 
   const page = new PageModel({
@@ -57,7 +89,7 @@ export const createPageService = async (
     workspace: new mongoose.Types.ObjectId(workspaceId),
     project: projectId ? new mongoose.Types.ObjectId(projectId) : null,
     parent: parentId ? new mongoose.Types.ObjectId(parentId) : null,
-    slug,
+    slug: finalSlug,
     createdBy: new mongoose.Types.ObjectId(userId),
     updatedBy: new mongoose.Types.ObjectId(userId),
     isPublished,

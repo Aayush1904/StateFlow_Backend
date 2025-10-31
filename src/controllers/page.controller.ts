@@ -26,7 +26,10 @@ const createPageSchema = z.object({
   projectId: z.string().trim().min(1).optional(),
   parentId: z.string().trim().min(1).optional(),
   isPublished: z.boolean().optional(),
-  templateId: z.string().trim().min(1).optional(),
+  templateId: z
+    .union([z.string().trim().min(1), z.undefined()])
+    .optional()
+    .transform((val) => (val === '' ? undefined : val)),
 });
 
 const updatePageSchema = z.object({

@@ -8,56 +8,95 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
     throw new BadRequestException('AI provider not configured');
   }
 
-  // Try multiple model names in order of preference
+  // Optimize text length based on action for faster processing
+  let optimizedText = text;
+  if (action === 'complete') {
+    // For autocomplete, use only last 150 chars for faster response
+    optimizedText = text.slice(-150);
+  } else if (action === 'summarize') {
+    // For summarize, limit to 2000 chars max
+    optimizedText = text.slice(0, 2000);
+  } else {
+    // For improve/rewrite, limit to 1500 chars
+    optimizedText = text.slice(0, 1500);
+  }
+
+  // Use fastest models first for quick responses
+  // gemini-1.5-flash is optimized for speed (under 1-2 secs)
   const modelNames = [
-    'gemini-1.5-pro',
-    'gemini-pro',
+    'gemini-1.5-flash',
     'gemini-1.5-flash-001',
-    'gemini-pro-latest'
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-pro', // Fallback for complex tasks
+    'gemini-pro',
   ];
 
-    // Lazy require to avoid import issues if package not installed yet
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEY);
+  // Lazy require to avoid import issues if package not installed yet
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { GoogleGenerativeAI } = require('@google/generative-ai');
+  const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEY);
 
   let lastError: any = null;
 
   for (const modelName of modelNames) {
     try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-    const prompt = buildPrompt(action, text);
-    const response = await model.generateContent(prompt);
-    const result = response?.response?.text?.() || '';
-    return { result };
-  } catch (err: any) {
+      // Configure generation for speed: limit tokens and temperature
+      const generationConfig = {
+        maxOutputTokens: action === 'complete' ? 30 : action === 'summarize' ? 150 : 500,
+        temperature: action === 'complete' ? 0.7 : 0.5,
+        topP: 0.8,
+        topK: 40,
+      };
+
+      // Create model with generation config for speed optimization
+      const model = genAI.getGenerativeModel({ 
+        model: modelName,
+        generationConfig,
+      });
+      
+      const prompt = buildPrompt(action, optimizedText);
+
+      // Add timeout wrapper (5 seconds for fast failure)
+      const generatePromise = model.generateContent(prompt);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timeout')), 5000)
+      );
+
+      const response = await Promise.race([generatePromise, timeoutPromise]) as any;
+      const result = response?.response?.text?.() || '';
+      
+      if (result.trim()) {
+        return { result: result.trim() };
+      }
+    } catch (err: any) {
       lastError = err;
-      // If it's a 404 model not found, try the next model
-      if (err.message?.includes('404') || err.message?.includes('not found')) {
+      // If it's a 404 model not found or timeout, try the next model
+      if (err.message?.includes('404') || err.message?.includes('not found') || err.message?.includes('timeout')) {
         continue;
       }
       // For other errors, throw immediately
-    throw new BadRequestException(`AI request failed: ${err.message || 'Unknown error'}`);
+      throw new BadRequestException(`AI request failed: ${err.message || 'Unknown error'}`);
     }
   }
 
-  // If all models failed with 404, throw a helpful error
+  // If all models failed, throw a helpful error
   throw new BadRequestException(
-    `AI request failed: No supported Gemini model found. Please check your API key has access to Gemini models. Last error: ${lastError?.message || 'Unknown error'}`
+    `AI request failed: No supported Gemini model found or request timed out. Last error: ${lastError?.message || 'Unknown error'}`
   );
 };
 
 const buildPrompt = (action: AIAction, text: string): string => {
+  // Optimized prompts for speed and clarity
   switch (action) {
     case 'summarize':
-      return `Summarize the following text in 3-5 bullet points. Keep key details and be concise.\n\nText:\n${text}`;
+      return `Summarize in 3-5 bullets:\n\n${text}`;
     case 'improve':
-      return `Improve clarity, grammar, and tone for the following text. Keep meaning, return the improved version only.\n\nText:\n${text}`;
+      return `Improve grammar and clarity. Return improved text only:\n\n${text}`;
     case 'complete':
-      return `Continue the following text naturally. Write the next 5-10 words that would logically follow. Be concise and contextually relevant. Return ONLY the continuation, not the original text.\n\nText:\n${text}\n\nContinuation:`;
+      return `Continue naturally (5-10 words only):\n\n${text}`;
     case 'rewrite':
     default:
-      return `Rewrite the following text to be more concise and professional. Return only the rewritten text.\n\nText:\n${text}`;
+      return `Rewrite concisely:\n\n${text}`;
   }
 };
 
