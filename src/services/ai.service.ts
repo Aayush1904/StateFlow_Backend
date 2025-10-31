@@ -49,14 +49,14 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
         topK: 40,
       };
 
-      // Create model with generationConfig included
+      // Create model with generationConfig (this is the correct way for this SDK)
       const model = genAI.getGenerativeModel({ 
         model: modelName,
         generationConfig,
       });
 
       // Add timeout wrapper (5 seconds for fast failure)
-      // Use simple string prompt format (most reliable)
+      // Pass prompt as simple string (SDK handles the conversion)
       const generatePromise = model.generateContent(prompt);
       
       const timeoutPromise = new Promise((_, reject) =>
@@ -72,8 +72,16 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
       
       const result = response.response.text();
       
-      if (result && result.trim()) {
+      if (result && typeof result === 'string' && result.trim()) {
         return { result: result.trim() };
+      }
+      
+      // If result is a function (some SDK versions), call it
+      if (typeof result === 'function') {
+        const textResult = result();
+        if (textResult && textResult.trim()) {
+          return { result: textResult.trim() };
+        }
       }
       
       // If no result, try next model
@@ -81,12 +89,22 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
     } catch (err: any) {
       lastError = err;
       
-      // Extract error details
-      const errorMessage = err.message || '';
-      const errorStatus = err.status || err.response?.status || 0;
-      const is404 = errorStatus === 404 || errorMessage.includes('404') || errorMessage.includes('not found');
-      const is400 = errorStatus === 400 || errorMessage.includes('400');
-      const isTimeout = errorMessage.includes('timeout');
+      // Extract detailed error information
+      const errorMessage = err.message || err.toString() || 'Unknown error';
+      const errorStatus = err.status || err.response?.status || err.statusCode || 0;
+      const errorDetails = err.response?.data || err.error || {};
+      
+      // Log detailed error for debugging
+      console.error(`AI Error for model ${modelName}:`, {
+        status: errorStatus,
+        message: errorMessage,
+        details: errorDetails,
+        fullError: err,
+      });
+      
+      const is404 = errorStatus === 404 || errorMessage.includes('404') || errorMessage.includes('not found') || errorMessage.includes('NOT_FOUND');
+      const is400 = errorStatus === 400 || errorMessage.includes('400') || errorMessage.includes('Bad Request');
+      const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('TIMEOUT');
       
       // If it's a 404 (model not found) or timeout, try the next model
       if (is404 || isTimeout) {
@@ -94,9 +112,15 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
         continue;
       }
       
-      // If it's a 400 (bad request), it might be a config issue - try next model
+      // If it's a 400 (bad request), log the full error and try next model
       if (is400) {
-        console.warn(`Bad request for model ${modelName}, trying next model...`, errorMessage);
+        console.warn(`Bad request for model ${modelName}. Error:`, errorMessage);
+        console.warn(`Error details:`, JSON.stringify(errorDetails, null, 2));
+        // Try next model unless it's a validation error that would affect all models
+        if (errorMessage.includes('API key') || errorMessage.includes('authentication')) {
+          // Don't try other models if it's an auth issue
+          throw new BadRequestException(`AI request failed: ${errorMessage}`);
+        }
         continue;
       }
       
@@ -105,7 +129,7 @@ export const aiAssistService = async (action: AIAction, text: string): Promise<{
       
       // If this is the last model, throw the error
       if (modelNames.indexOf(modelName) === modelNames.length - 1) {
-        throw new BadRequestException(`AI request failed: ${errorMessage || 'Unknown error'}`);
+        throw new BadRequestException(`AI request failed: ${errorMessage}. Details: ${JSON.stringify(errorDetails)}`);
       }
       
       // Otherwise, continue to next model
