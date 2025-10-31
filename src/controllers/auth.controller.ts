@@ -11,18 +11,31 @@ export const googleLoginCallback = asyncHandler(
   async (req: Request, res: Response) => {
     const currentWorkspace = req.user?.currentWorkspace;
 
-    if (!currentWorkspace) {
+    if (!currentWorkspace || !req.user) {
       return res.redirect(
         `${config.FRONTEND_GOOGLE_CALLBACK_URL}?status=failure`
       );
     }
 
+    // Issue JWT token for the user
+    const token = jwt.sign(
+      {
+        _id: (req.user as any)._id,
+        name: (req.user as any).name,
+        email: (req.user as any).email,
+        profilePicture: (req.user as any).profilePicture,
+      },
+      process.env.JWT_SECRET || "development-secret",
+      { expiresIn: "7d" }
+    );
+
     const frontendUrl = config.FRONTEND_ORIGIN.startsWith('http') 
       ? config.FRONTEND_ORIGIN 
       : `https://${config.FRONTEND_ORIGIN}`;
     
+    // Redirect with token in URL so frontend can extract and store it
     return res.redirect(
-      `${frontendUrl}/workspace/${currentWorkspace}`
+      `${frontendUrl}/workspace/${currentWorkspace}?token=${token}`
     );
   }
 );
